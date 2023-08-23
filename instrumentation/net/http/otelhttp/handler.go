@@ -216,14 +216,16 @@ func (h *middleware) serveHTTP(w http.ResponseWriter, r *http.Request, next http
 
 	next.ServeHTTP(w, r.WithContext(ctx))
 
-	setAfterServeAttributes(span, bw.read, rww.written, rww.statusCode, bw.err, rww.err)
+	commonAttributes := labeler.Get()
+
+	setAfterServeAttributes(span, bw.read, rww.written, rww.statusCode, bw.err, rww.err, commonAttributes...)
 
 	// Add metrics
-	attributes := append(labeler.Get(), semconvutil.HTTPServerRequest(h.server, r)...)
+	httpAttributes := append(commonAttributes, semconvutil.HTTPServerRequest(h.server, r)...)
 	if rww.statusCode > 0 {
-		attributes = append(attributes, semconv.HTTPStatusCode(rww.statusCode))
+		httpAttributes = append(httpAttributes, semconv.HTTPStatusCode(rww.statusCode))
 	}
-	o := metric.WithAttributes(attributes...)
+	o := metric.WithAttributes(httpAttributes...)
 	h.counters[RequestContentLength].Add(ctx, bw.read, o)
 	h.counters[ResponseContentLength].Add(ctx, rww.written, o)
 
@@ -233,7 +235,7 @@ func (h *middleware) serveHTTP(w http.ResponseWriter, r *http.Request, next http
 	h.valueRecorders[ServerLatency].Record(ctx, elapsedTime, o)
 }
 
-func setAfterServeAttributes(span trace.Span, read, wrote int64, statusCode int, rerr, werr error) {
+func setAfterServeAttributes(span trace.Span, read, wrote int64, statusCode int, rerr, werr error, additional ...attribute.KeyValue) {
 	attributes := []attribute.KeyValue{}
 
 	// TODO: Consider adding an event after each read and write, possibly as an
@@ -255,6 +257,8 @@ func setAfterServeAttributes(span trace.Span, read, wrote int64, statusCode int,
 	if werr != nil && werr != io.EOF {
 		attributes = append(attributes, WriteErrorKey.String(werr.Error()))
 	}
+	attributes = append(attributes, additional...)
+
 	span.SetAttributes(attributes...)
 }
 
